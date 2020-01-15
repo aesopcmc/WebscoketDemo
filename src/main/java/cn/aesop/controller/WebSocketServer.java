@@ -1,17 +1,23 @@
 package cn.aesop.controller;
 
+import cn.aesop.domain.User;
+import cn.aesop.result.MessageType;
+import cn.aesop.result.ResultMessage;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
+import com.auth0.jwt.JWT;
+import com.auth0.jwt.exceptions.JWTDecodeException;
+import com.auth0.jwt.interfaces.DecodedJWT;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.thymeleaf.util.StringUtils;
 
 import javax.websocket.*;
 import javax.websocket.server.PathParam;
 import javax.websocket.server.ServerEndpoint;
+import javax.xml.transform.Result;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -19,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Slf4j
 @Component
-@ServerEndpoint("/websocket/{username}")
+@ServerEndpoint("/websocket/{token}")
 public class WebSocketServer {
     /**
      * 在线人数
@@ -36,7 +42,7 @@ public class WebSocketServer {
     /**
      * 用户名称
      */
-    private String username;
+    private String username="";
 
     /**
      * 建立连接
@@ -44,29 +50,51 @@ public class WebSocketServer {
      * @param session
      */
     @OnOpen
-    public void onOpen(@PathParam("username") String username, Session session) {
+    public void onOpen(@PathParam("token") String token, Session session) {
+        //TODO 验证token,取出用户名，若没有登录，直接发送到前端关闭连接，注意不要回到onClose
+
+        DecodedJWT jwt;
+        try{
+            jwt = JWT.decode(token);
+        }catch (JWTDecodeException e) {
+            log.warn("token无效", e);
+            session.getAsyncRemote().sendText(ResultMessage.sendTokenError());
+            return;
+        }
+
         onlineNumber++;
-        log.info("现在来连接的客户id："+session.getId()+"用户名："+username);
-        this.username = username;
+        this.username = jwt.getSubject();
         this.session = session;
+        log.info("现在来连接的客户id："+session.getId()+"用户名："+username);
+
         log.info("有新连接加入！ 当前在线人数" + onlineNumber);
         try {
             //messageType 1代表上线 2代表下线 3代表在线名单 4代表普通消息
             //先给所有人发送通知，说我上线了
-            Map<String,Object> map1 = new HashMap<>();
-            map1.put("messageType",1);
-            map1.put("username",username);
-            sendMessageAll(JSON.toJSONString(map1),username);
+            // Map<String,Object> map1 = new HashMap<>();
+            // map1.put("messageType",1);
+            // map1.put("username",username);
+            // sendMessageAll(JSON.toJSONString(map1));
 
-            //把自己的信息加入到map当中去
+            //先给所有人发送通知，说我上线了
+            sendMessageAll(ResultMessage.sendOnline(username));
+
+            // //给自己发一条消息：告诉自己现在都有谁在线
+            // Map<String,Object> map2 = new HashMap<>();
+            // map2.put("messageType",3);
+            // //移除掉自己
+            // Set<String> set = clients.keySet();
+            // map2.put("onlineUsers", set);
+            // sendMessageTo(JSON.toJSONString(map2), username);
+
+            // 把自己的信息加入到map当中去
             clients.put(username, this);
+
+            //当前在线用户，排除自己
+            Set<String> onlineUsers = clients.keySet();
+
             //给自己发一条消息：告诉自己现在都有谁在线
-            Map<String,Object> map2 = new HashMap<>();
-            map2.put("messageType",3);
-            //移除掉自己
-            Set<String> set = clients.keySet();
-            map2.put("onlineUsers",set);
-            sendMessageTo(JSON.toJSONString(map2),username);
+            sendMessageTo(ResultMessage.sendOnlineList(onlineUsers), username);
         }
         catch (IOException e){
             log.info(username+"上线的时候通知所有人发生了错误");
@@ -83,20 +111,20 @@ public class WebSocketServer {
      * 连接关闭
      */
     @OnClose
-    public void onClose()
-    {
+    public void onClose() {
+        if(clients.remove(username) == null) return;
+
         onlineNumber--;
-        //webSockets.remove(this);
-        clients.remove(username);
         try {
             //messageType 1代表上线 2代表下线 3代表在线名单  4代表普通消息
-            Map<String,Object> map1 = new HashMap<>();
-            map1.put("messageType",2);
-            map1.put("onlineUsers",clients.keySet());
-            map1.put("username",username);
-            sendMessageAll(JSON.toJSONString(map1),username);
-        }
-        catch (IOException e){
+            // Map<String,Object> map1 = new HashMap<>();
+            // map1.put("messageType",2);
+            // map1.put("onlineUsers",clients.keySet());
+            // map1.put("username",username);
+            // sendMessageAll(JSON.toJSONString(map1),username);
+            //
+            sendMessageAll(ResultMessage.sendOffline(username, clients.keySet()));
+        } catch (IOException e){
             log.info(username+"下线的时候通知所有人发生了错误");
         }
         log.info("有连接关闭！ 当前在线人数" + onlineNumber);
@@ -109,8 +137,7 @@ public class WebSocketServer {
      * @param session 会话
      */
     @OnMessage
-    public void onMessage(String message, Session session)
-    {
+    public void onMessage(String message, Session session) {
         try {
             log.info("来自客户端消息：" + message+"客户端的id是："+session.getId());
             JSONObject jsonObject = JSON.parseObject(message);
@@ -119,17 +146,19 @@ public class WebSocketServer {
             String tousername = jsonObject.getString("to");
             //如果不是发给所有，那么就发给某一个人
             //messageType 1代表上线 2代表下线 3代表在线名单  4代表普通消息
-            Map<String,Object> map1 = new HashMap<>();
-            map1.put("messageType",4);
-            map1.put("textMessage",textMessage);
-            map1.put("fromusername",fromusername);
+            // Map<String,Object> map1 = new HashMap<>();
+            // map1.put("messageType",4);
+            // map1.put("textMessage",textMessage);
+            // map1.put("fromusername",fromusername);
             if(tousername.equals("All")){
-                map1.put("tousername","所有人");
-                sendMessageAll(JSON.toJSONString(map1),fromusername);
+                // map1.put("tousername","所有人");
+                // sendMessageAll(JSON.toJSONString(map1),fromusername);
+                sendMessageAll(ResultMessage.sendMessageAll(username, textMessage));
             }
             else{
-                map1.put("tousername",tousername);
-                sendMessageTo(JSON.toJSONString(map1),tousername);
+                // map1.put("tousername",tousername);
+                // sendMessageTo(JSON.toJSONString(map1),tousername);
+                sendMessageTo(ResultMessage.sendMessageOne(username,tousername, textMessage), tousername);
             }
         }
         catch (Exception e){
@@ -138,17 +167,17 @@ public class WebSocketServer {
 
     }
 
-
-    public void sendMessageTo(String message, String ToUserName) throws IOException {
+    public void sendMessageTo(String message, String toUsername) throws IOException {
         for (WebSocketServer item : clients.values()) {
-            if (item.username.equals(ToUserName) ) {
+            if (item.username.equals(toUsername) ) {
                 item.session.getAsyncRemote().sendText(message);
                 break;
             }
         }
     }
 
-    public void sendMessageAll(String message,String FromUserName) throws IOException {
+
+    public void sendMessageAll(String message) throws IOException {
         for (WebSocketServer item : clients.values()) {
             item.session.getAsyncRemote().sendText(message);
         }

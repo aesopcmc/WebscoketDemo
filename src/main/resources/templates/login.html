@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+  <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+      <title>Spring Boot WebSocket Chat Application | CalliCoder</title>
+      <link rel="stylesheet" href="/css/main.css" />
+      <meta charset="UTF-8">
+  </head>
+  <body>
+    <noscript>
+      <h2>Sorry! Your browser doesn't support Javascript</h2>
+    </noscript>
+
+    <div id="username-page">
+        <div class="username-page-container">
+            <h3>用户列表</h3>
+            <ul>
+                <li th:each="user,stat : ${users}">
+                    <span th:text="${user.username}"></span> - <span th:text="${user.password}"></span>
+                </li>
+            </ul>
+            <h1 class="title">登入聊天室</h1>
+
+            <form id="loginForm" name="loginForm">
+                <div class="form-group">
+                    <input type="text" id="username" placeholder="输入用户名" autocomplete="off" class="form-control"/>
+                </div>
+                <div class="form-group">
+                    <input type="text" id="password" placeholder="输入密码" autocomplete="off" class="form-control"/>
+                </div>
+                <div class="form-group">
+                    <button type="button" id="submit" class="accent username-submit">连接</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!--<script src="https://cdn.bootcss.com/sockjs-client/1.1.4/sockjs.min.js"></script>-->
+    <!--<script src="https://cdn.bootcss.com/stomp.js/2.3.3/stomp.min.js"></script>-->
+    <!--<script src="/js/login.js"></script>-->
+    <script src="/js/jquery-2.1.1.min.js"></script>
+    <script type="text/javascript">
+        $(document).ready(function(){
+            $("#submit").click(function() {
+                var username = $("#username").val();
+                var password = $("#password").val();
+                $.ajax({
+                    type: 'POST',
+                    url: "/websocket/doLogin",
+                    headers: {"content-type":"application/json"},
+                    data: JSON.stringify({username: username, password: password}),
+                    dataType: "json",
+                    success: function (res) {
+                        console.log("成功", res)
+                        if (res.code !== 0) {
+                            alert(res.message)
+                        }else {
+                            localStorage.setItem("jwtToken", res.data.token);
+                            document.location.href = "/websocket";
+                        }
+                    }
+                });
+            })
+        });
+    </script>
+  </body>
+</html>
